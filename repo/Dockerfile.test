@@ -1,0 +1,23 @@
+# Test runner image. Built once via docker-compose.test.yml.
+#
+# Strategy: use the official Gradle image pinned to the same Gradle version
+# as gradle-wrapper.properties so image build does not need to download the
+# wrapper distribution. Then bake the project's dependency graph into layers
+# so subsequent test runs only execute the test task.
+FROM gradle:8.10.2-jdk21-alpine
+
+ENV GRADLE_USER_HOME=/root/.gradle \
+    GRADLE_OPTS="-Dorg.gradle.daemon=false -Dfile.encoding=UTF-8"
+
+WORKDIR /workspace
+
+# Layer 1: project metadata and dependency graph.
+COPY gradle/ gradle/
+COPY build.gradle settings.gradle ./
+RUN gradle --version --no-daemon && gradle dependencies --no-daemon --console=plain 2>/dev/null || true
+
+# Layer 2: source as fallback for image-only execution; runtime usage
+# bind-mounts the workspace so reports surface on the host.
+COPY src/ src/
+
+CMD ["gradle", "test", "--no-daemon", "--console=plain"]

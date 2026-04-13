@@ -1,0 +1,7 @@
+# Optional overlay to expose the PostgreSQL service on the host for
+# development/debug only. Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.db-expose.yml up -d
+services:
+  db:
+    ports:
+      - "127.0.0.1:${DB_HOST_PORT:-5432}:5432"

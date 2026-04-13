@@ -1,0 +1,84 @@
+spring:
+  application:
+    name: civicworks
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/civicworks}
+    username: ${SPRING_DATASOURCE_USERNAME:civicworks}
+    password: ${SPRING_DATASOURCE_PASSWORD:}
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+        format_sql: false
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: false
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+    default-property-inclusion: non_null
+  quartz:
+    # The Quartz scheduler bean is built programmatically in QuartzJobConfig
+    # (correct PostgreSQLDelegate + useProperties=true). Spring Boot still
+    # lays out the JDBC store wiring for that bean.
+    job-store-type: jdbc
+    jdbc:
+      initialize-schema: never
+    overwrite-existing-jobs: true
+
+server:
+  port: 8080
+  # Bind explicitly to all interfaces inside the container so Docker port
+  # forwarding (host 127.0.0.1:18080 -> container 8080) works regardless of
+  # JVM defaults or future profile changes.
+  address: 0.0.0.0
+  shutdown: graceful
+  tomcat:
+    connection-timeout: 10s
+    keep-alive-timeout: 10s
+  error:
+    include-message: never
+    include-stacktrace: never
+
+civicworks:
+  timezone: America/New_York
+  session:
+    ttl-minutes: 480
+  search:
+    history-retention-days: 90
+  backup:
+    dir: ${CIVICWORKS_BACKUP_DIR:/tmp/civicworks-backups}
+  encryption:
+    key: ${CIVICWORKS_ENCRYPTION_KEY:}
+
+logging:
+  level:
+    com.civicworks: INFO
+    org.springframework.security: WARN
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: when-authorized
+      probes:
+        enabled: true
+  health:
+    # Avoid synchronous 30s JDBC validation on every health check; rely on
+    # Hikari's own pool checks. Liveness/readiness probes still detect
+    # outages.
+    db:
+      enabled: true
+    defaults:
+      enabled: true

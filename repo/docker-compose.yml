@@ -1,0 +1,80 @@
+# CivicWorks runtime stack.
+#
+# `docker compose up --build` is sufficient on a cold machine. No external
+# `.env` file, no manual ./init_db.sh step, no `export ...`, and no secret
+# values are committed in the repo.
+#
+# How dev defaults are produced without committing secrets:
+#  * The app entrypoint (docker-entrypoint.sh) generates a per-installation
+#    encryption key on first boot into the cwk-secrets named volume and
+#    reuses the same key on every subsequent boot (so encrypted data is
+#    decryptable across restarts).
+#  * PostgreSQL runs with trust auth on the internal compose network only
+#    (it is not exposed to the host), so no DB password is required for
+#    local dev.
+#
+# Production override knobs (no .env required):
+#   CIVICWORKS_ENCRYPTION_KEY  - inject a real key from your secret store
+#   APP_HOST_PORT              - default 18080
+#   DB_HOST_PORT               - only used by docker-compose.db-expose.yml
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: civicworks
+      POSTGRES_USER: civicworks
+      # Internal-only DB on the compose network; no host port. Trust auth
+      # is acceptable for dev. To require a password, set POSTGRES_PASSWORD
+      # here AND SPRING_DATASOURCE_PASSWORD on the app service from a real
+      # secret source (env, secret store, mounted file).
+      POSTGRES_HOST_AUTH_METHOD: trust
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - pgbackups:/backups
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U civicworks -d civicworks"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      # Loopback-only host binding by default. Override host port via
+      # APP_HOST_PORT if 18080 is already in use locally.
+      - "127.0.0.1:${APP_HOST_PORT:-18080}:8080"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/civicworks
+      SPRING_DATASOURCE_USERNAME: civicworks
+      CIVICWORKS_BACKUP_DIR: /backups
+    volumes:
+      - pgbackups:/backups
+      - cwk-secrets:/run/cwk-secrets
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+volumes:
+  pgdata:
+  pgbackups:
+  cwk-secrets:
+
+networks:
+  default:
+    driver: bridge
+    driver_opts:
+      # Conservative MTU so traffic survives VPN/tunnel encapsulation on the
+      # host (some hosts terminate connections that exceed the underlying
+      # tunnel MTU, manifesting as "TCP connects but reply times out" on
+      # 127.0.0.1:18080). Override with COMPOSE_NETWORK_MTU.
+      com.docker.network.driver.mtu: ${COMPOSE_NETWORK_MTU:-1450}

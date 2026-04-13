@@ -1,0 +1,64 @@
+plugins {
+    id 'java'
+    id 'org.springframework.boot' version '3.3.5'
+    id 'io.spring.dependency-management' version '1.1.6'
+}
+
+group = 'com.civicworks'
+version = '0.1.0'
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_21
+    targetCompatibility = JavaVersion.VERSION_21
+    // Gradle toolchain: pins compile/test/javadoc to JDK 21 regardless of the JVM
+    // that launched Gradle itself. Gradle will auto-provision JDK 21 if none
+    // matching is found on disk (see docs: Java Toolchains).
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    // Spring Boot starters
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+    implementation 'org.springframework.boot:spring-boot-starter-security'
+    implementation 'org.springframework.boot:spring-boot-starter-validation'
+    implementation 'org.springframework.boot:spring-boot-starter-actuator'
+
+    // Flyway
+    implementation 'org.flywaydb:flyway-core'
+    implementation 'org.flywaydb:flyway-database-postgresql'
+
+    // PostgreSQL
+    runtimeOnly 'org.postgresql:postgresql'
+
+    // Quartz scheduler with JDBC store
+    implementation 'org.springframework.boot:spring-boot-starter-quartz'
+
+    // Jackson JSR310
+    implementation 'com.fasterxml.jackson.datatype:jackson-datatype-jsr310'
+
+    // Logging (structured JSON)
+    implementation 'net.logstash.logback:logstash-logback-encoder:8.0'
+
+    // HTML sanitizer (allowlist-based; replaces home-rolled regex stripping)
+    implementation 'org.jsoup:jsoup:1.17.2'
+
+    // Test
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testImplementation 'org.springframework.security:spring-security-test'
+    testImplementation 'org.testcontainers:testcontainers'
+    testImplementation 'org.testcontainers:junit-jupiter'
+    testImplementation 'org.testcontainers:postgresql'
+    testRuntimeOnly 'org.postgresql:postgresql'
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+    jvmArgs '-XX:+EnableDynamicAgentLoading'
+}

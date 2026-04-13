@@ -1,0 +1,14 @@
+build/
+.gradle/
+*.class
+*.jar
+*.war
+.idea/
+*.iml
+.vscode/
+.env
+.env.*
+.secrets/
+out/
+bin/
+*.log

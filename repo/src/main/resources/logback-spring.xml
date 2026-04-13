@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+
+    <!--
+      Structured JSON logging via logstash-logback-encoder.
+      Each line is one JSON object containing timestamp, level, logger,
+      thread, message, MDC keys (requestId, actorId), and any throwable.
+      Sensitive token-like substrings are masked at encoder time.
+    -->
+
+    <springProperty scope="context" name="appName" source="spring.application.name" defaultValue="civicworks"/>
+    <springProperty scope="context" name="env" source="spring.profiles.active" defaultValue="default"/>
+
+    <appender name="JSON" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+            <includeMdcKeyName>requestId</includeMdcKeyName>
+            <includeMdcKeyName>actorId</includeMdcKeyName>
+            <includeMdcKeyName>action</includeMdcKeyName>
+            <customFields>{"app":"${appName}","env":"${env}"}</customFields>
+            <fieldNames>
+                <timestamp>ts</timestamp>
+                <message>msg</message>
+                <thread>thread</thread>
+                <logger>logger</logger>
+                <level>level</level>
+                <levelValue>[ignore]</levelValue>
+                <version>[ignore]</version>
+            </fieldNames>
+            <!-- Mask any "cwk_sess_*" tokens and obvious password/secret fields. -->
+            <jsonGeneratorDecorator class="net.logstash.logback.mask.MaskingJsonGeneratorDecorator">
+                <defaultMask>****</defaultMask>
+                <valueMask>
+                    <value>cwk_sess_[A-Za-z0-9_\-]+</value>
+                </valueMask>
+                <path>$..password</path>
+                <path>$..passwordHash</path>
+                <path>$..accessToken</path>
+                <path>$..token</path>
+                <path>$..tokenHash</path>
+                <path>$..encryptionKey</path>
+                <path>$..encryptedResidentId</path>
+            </jsonGeneratorDecorator>
+        </encoder>
+    </appender>
+
+    <!-- Plain text appender used only by the test profile -->
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{ISO8601} [%thread] %-5level %logger{36} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <springProfile name="test">
+        <root level="WARN">
+            <appender-ref ref="CONSOLE"/>
+        </root>
+        <logger name="com.civicworks" level="INFO"/>
+    </springProfile>
+
+    <springProfile name="!test">
+        <root level="INFO">
+            <appender-ref ref="JSON"/>
+        </root>
+        <logger name="com.civicworks" level="INFO"/>
+        <logger name="org.springframework.security" level="WARN"/>
+        <logger name="org.hibernate.SQL" level="WARN"/>
+        <logger name="org.quartz" level="INFO"/>
+    </springProfile>
+
+</configuration>

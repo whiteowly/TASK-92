@@ -1,0 +1,28 @@
+spring:
+  datasource:
+    url: jdbc:tc:postgresql:16-alpine:///civicworks?TC_TMPFS=/testtmpfs:rw
+    username: civicworks
+    password: testpass
+    driver-class-name: org.testcontainers.jdbc.ContainerDatabaseDriver
+  jpa:
+    hibernate:
+      ddl-auto: none
+    open-in-view: false
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+  quartz:
+    auto-startup: false
+    job-store-type: memory
+
+civicworks:
+  timezone: America/New_York
+  session:
+    ttl-minutes: 480
+  search:
+    history-retention-days: 90
+  backup:
+    dir: /tmp/test-backups
+  encryption:
+    key: dGVzdGtleXRlc3RrZXl0ZXN0a2V5dGVzdGtleXRlcw==

@@ -1,0 +1,19 @@
+# Dockerized broad-test stack. Invoked by ./run_tests.sh.
+# Uses the prebaked Dockerfile.test image (gradle:8.10.2-jdk21-alpine
+# with dependency graph already present) so first-run does not need to
+# download the Gradle wrapper distribution mid-test.
+services:
+  tests:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    working_dir: /workspace
+    # Mount the repo so test reports (build/reports/...) surface on the
+    # host and edits between runs are picked up without rebuilding.
+    volumes:
+      - .:/workspace
+      - gradle-cache:/root/.gradle
+    command: ["gradle", "test", "--no-daemon", "--console=plain"]
+
+volumes:
+  gradle-cache:
