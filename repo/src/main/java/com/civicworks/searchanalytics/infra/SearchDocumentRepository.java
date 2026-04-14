@@ -69,8 +69,12 @@ public interface SearchDocumentRepository extends JpaRepository<SearchDocument, 
                                               @Param("maxPrice") BigDecimal maxPrice,
                                               Pageable pageable);
 
-    @Query(value = "SELECT DISTINCT title FROM search_documents " +
-            "WHERE state = 'PUBLISHED' AND title % :prefix ORDER BY similarity(title, :prefix) DESC LIMIT 10",
+    @Query(value = "SELECT title FROM (" +
+            "  SELECT DISTINCT ON (title) title, similarity(title, :prefix) AS score " +
+            "  FROM search_documents " +
+            "  WHERE state = 'PUBLISHED' AND title % :prefix " +
+            "  ORDER BY title, similarity(title, :prefix) DESC" +
+            ") sub ORDER BY score DESC, title ASC LIMIT 10",
             nativeQuery = true)
     java.util.List<String> typeaheadPublic(@Param("prefix") String prefix);
 }
