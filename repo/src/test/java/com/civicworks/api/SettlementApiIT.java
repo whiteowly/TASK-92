@@ -5,7 +5,12 @@ import com.civicworks.billing.domain.Bill;
 import com.civicworks.platform.security.Role;
 import com.civicworks.platform.security.UserEntity;
 import com.civicworks.settlement.domain.CashShift;
+import com.civicworks.settlement.domain.DiscrepancyCase;
+import com.civicworks.settlement.domain.ShiftHandoverReport;
+import com.civicworks.settlement.infra.DiscrepancyCaseRepository;
+import com.civicworks.settlement.infra.ShiftHandoverReportRepository;
 import org.junit.jupiter.api.*;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.*;
 
 import java.math.BigDecimal;
@@ -18,11 +23,15 @@ import static org.assertj.core.api.Assertions.assertThat;
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class SettlementApiIT extends BaseApiIT {
 
+    @Autowired private DiscrepancyCaseRepository discrepancyCaseRepository;
+    @Autowired private ShiftHandoverReportRepository shiftHandoverReportRepository;
+
     private String adminToken;
     private String clerkToken;
     private String auditorToken;
     private String editorToken;
     private UserEntity clerkUser;
+    private UserEntity adminUser;
     private Account account;
     private Bill paymentBill;
     private CashShift shift;
@@ -31,6 +40,7 @@ class SettlementApiIT extends BaseApiIT {
     @BeforeAll
     void setup() {
         adminToken = login("admin", "admin123");
+        adminUser = userRepository.findByUsername("admin").orElseThrow();
         clerkUser = createUser(unique("stl_clerk"), "pass123", Role.BILLING_CLERK);
         clerkToken = login(clerkUser.getUsername(), "pass123");
         auditorToken = createUserAndLogin("stl_auditor", "pass123", Role.AUDITOR);
@@ -164,6 +174,15 @@ class SettlementApiIT extends BaseApiIT {
         ResponseEntity<Map> resp = post("/api/v1/settlements/payments/" + paymentId + "/reverse",
                 clerkToken, body);
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
+        Map<String, Object> respBody = resp.getBody();
+        assertThat(respBody).isNotNull();
+        assertThat(respBody.get("id")).isNotNull();
+        assertThat(((Number) respBody.get("originalPaymentId")).longValue()).isEqualTo(paymentId);
+        // The original posted-payment amount was 100.00 (postPayment_asClerk_returns201).
+        assertThat(new BigDecimal(respBody.get("reversalAmount").toString()))
+                .isEqualByComparingTo(new BigDecimal("100.00"));
+        assertThat(respBody.get("reason")).isEqualTo("Customer refund request");
+        assertThat(((Number) respBody.get("reversedBy")).longValue()).isEqualTo(clerkUser.getId());
     }
 
     @Test
@@ -181,6 +200,17 @@ class SettlementApiIT extends BaseApiIT {
         ResponseEntity<Map> resp = post("/api/v1/settlements/shifts/" + shift.getId() + "/handover",
                 clerkToken, null);
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
+        Map<String, Object> body = resp.getBody();
+        assertThat(body).isNotNull();
+        assertThat(body.get("id")).isNotNull();
+        assertThat(((Number) body.get("shiftId")).longValue()).isEqualTo(shift.getId());
+        // Every method-total + variance field must be populated on a handover report.
+        assertThat(body.get("cashTotal")).isNotNull();
+        assertThat(body.get("checkTotal")).isNotNull();
+        assertThat(body.get("voucherTotal")).isNotNull();
+        assertThat(body.get("otherTotal")).isNotNull();
+        assertThat(body.get("postedArTotal")).isNotNull();
+        assertThat(body.get("variance")).isNotNull();
     }
 
     @Test
@@ -246,5 +276,58 @@ class SettlementApiIT extends BaseApiIT {
         ResponseEntity<Map> resp = postNoAuth("/api/v1/settlements/discrepancies/1/resolve",
                 Map.of("notes", "test"));
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
+    }
+
+    @Test
+    void resolveDiscrepancy_asAdmin_returns200_andTransitionsCaseToResolved() {
+        // Seed a handover report + open discrepancy directly. We avoid driving
+        // this through postPayment + handover so the test stays focused on the
+        // resolve handler contract.
+        ShiftHandoverReport report = new ShiftHandoverReport();
+        report.setShiftId(shift.getId());
+        report.setCashTotal(new BigDecimal("100.00"));
+        report.setCheckTotal(BigDecimal.ZERO);
+        report.setVoucherTotal(BigDecimal.ZERO);
+        report.setOtherTotal(BigDecimal.ZERO);
+        report.setPostedArTotal(new BigDecimal("105.00"));
+        report.setVariance(new BigDecimal("5.00"));
+        ShiftHandoverReport savedReport = shiftHandoverReportRepository.saveAndFlush(report);
+
+        DiscrepancyCase dc = new DiscrepancyCase();
+        dc.setHandoverReportId(savedReport.getId());
+        dc.setVarianceAmount(new BigDecimal("5.00"));
+        DiscrepancyCase savedDc = discrepancyCaseRepository.saveAndFlush(dc);
+        assertThat(savedDc.getStatus()).isEqualTo("OPEN");
+
+        Map<String, Object> body = Map.of("notes", "Recount confirmed cash drawer was short by $5");
+        ResponseEntity<Map> resp = post(
+                "/api/v1/settlements/discrepancies/" + savedDc.getId() + "/resolve",
+                adminToken, body);
+
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
+        Map<String, Object> respBody = resp.getBody();
+        assertThat(respBody).isNotNull();
+        assertThat(((Number) respBody.get("id")).longValue()).isEqualTo(savedDc.getId());
+        assertThat(respBody.get("status")).isEqualTo("RESOLVED");
+        assertThat(respBody.get("resolutionNotes"))
+                .isEqualTo("Recount confirmed cash drawer was short by $5");
+        assertThat(((Number) respBody.get("resolvedBy")).longValue()).isEqualTo(adminUser.getId());
+        assertThat(respBody.get("resolvedAt")).isNotNull();
+        assertThat(((Number) respBody.get("handoverReportId")).longValue())
+                .isEqualTo(savedReport.getId());
+
+        // Verify persisted state matches the response, not just the wire format.
+        DiscrepancyCase reread = discrepancyCaseRepository.findById(savedDc.getId()).orElseThrow();
+        assertThat(reread.getStatus()).isEqualTo("RESOLVED");
+        assertThat(reread.getResolvedBy()).isEqualTo(adminUser.getId());
+        assertThat(reread.getResolvedAt()).isNotNull();
+    }
+
+    @Test
+    void resolveDiscrepancy_unknownId_returns404() {
+        Map<String, Object> body = Map.of("notes", "n/a");
+        ResponseEntity<Map> resp = post(
+                "/api/v1/settlements/discrepancies/9999999/resolve", adminToken, body);
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
     }
 }

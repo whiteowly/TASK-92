@@ -1,8 +1,11 @@
 package com.civicworks.api;
 
+import com.civicworks.notifications.domain.NotificationOutbox;
+import com.civicworks.notifications.infra.NotificationOutboxRepository;
 import com.civicworks.platform.security.Role;
 import com.civicworks.platform.security.UserEntity;
 import org.junit.jupiter.api.*;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.*;
 
 import java.time.Instant;
@@ -13,6 +16,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class NotificationApiIT extends BaseApiIT {
+
+    @Autowired private NotificationOutboxRepository notificationOutboxRepository;
 
     private String adminToken;
     private String userToken;
@@ -35,8 +40,9 @@ class NotificationApiIT extends BaseApiIT {
     @Test
     @Order(1)
     void createTemplate_asAdmin_returns201() {
+        String name = unique("tmpl");
         Map<String, Object> body = Map.of(
-                "name", unique("tmpl"),
+                "name", name,
                 "subject", "Test Subject",
                 "body", "Hello {{name}}!",
                 "channel", "IN_APP",
@@ -44,7 +50,14 @@ class NotificationApiIT extends BaseApiIT {
         );
         ResponseEntity<Map> resp = post("/api/v1/notifications/templates", adminToken, body);
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.CREATED);
-        templateId = ((Number) resp.getBody().get("id")).longValue();
+        Map<String, Object> respBody = resp.getBody();
+        assertThat(respBody).isNotNull();
+        assertThat(respBody.get("id")).isNotNull();
+        assertThat(respBody.get("name")).isEqualTo(name);
+        assertThat(respBody.get("subject")).isEqualTo("Test Subject");
+        assertThat(respBody.get("body")).isEqualTo("Hello {{name}}!");
+        assertThat(respBody.get("channel")).isEqualTo("IN_APP");
+        templateId = ((Number) respBody.get("id")).longValue();
     }
 
     @Test
@@ -115,7 +128,15 @@ class NotificationApiIT extends BaseApiIT {
         );
         ResponseEntity<Map> resp = post("/api/v1/notifications/messages", adminToken, body);
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.CREATED);
-        messageId = ((Number) resp.getBody().get("id")).longValue();
+        Map<String, Object> respBody = resp.getBody();
+        assertThat(respBody).isNotNull();
+        assertThat(respBody.get("id")).isNotNull();
+        assertThat(((Number) respBody.get("recipientId")).longValue()).isEqualTo(recipient.getId());
+        assertThat(respBody.get("subject")).isEqualTo("Test Notification");
+        assertThat(respBody.get("body")).isEqualTo("You have a new message");
+        // Newly created in-app messages start un-acked.
+        assertThat(respBody.get("readAt")).isNull();
+        messageId = ((Number) respBody.get("id")).longValue();
     }
 
     @Test
@@ -243,5 +264,44 @@ class NotificationApiIT extends BaseApiIT {
     void markExported_noAuth_returns401() {
         ResponseEntity<Map> resp = postNoAuth("/api/v1/notifications/outbox/1/mark-exported", null);
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
+    }
+
+    @Test
+    void markExported_asAdmin_returns200_andMarksEntryExported() {
+        // Seed an un-exported outbox row directly — keeps the test focused on
+        // the handler contract rather than re-exercising the create-message +
+        // channel-enable plumbing (already covered by NotificationOutboxFlowTest).
+        NotificationOutbox seeded = new NotificationOutbox();
+        seeded.setChannel("EMAIL");
+        seeded.setRecipientRef(String.valueOf(recipient.getId()));
+        seeded.setSubject("Export me");
+        seeded.setBody("payload body");
+        NotificationOutbox saved = notificationOutboxRepository.saveAndFlush(seeded);
+
+        ResponseEntity<Map> resp = post(
+                "/api/v1/notifications/outbox/" + saved.getId() + "/mark-exported",
+                adminToken, null);
+
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
+        Map<String, Object> body = resp.getBody();
+        assertThat(body).isNotNull();
+        assertThat(((Number) body.get("id")).longValue()).isEqualTo(saved.getId());
+        assertThat(body.get("channel")).isEqualTo("EMAIL");
+        assertThat(body.get("subject")).isEqualTo("Export me");
+        assertThat(body.get("recipientRef")).isEqualTo(String.valueOf(recipient.getId()));
+        assertThat(body.get("exported")).isEqualTo(Boolean.TRUE);
+        assertThat(body.get("exportedAt")).isNotNull();
+
+        // Verify persisted state matches the response.
+        NotificationOutbox reread = notificationOutboxRepository.findById(saved.getId()).orElseThrow();
+        assertThat(reread.isExported()).isTrue();
+        assertThat(reread.getExportedAt()).isNotNull();
+    }
+
+    @Test
+    void markExported_unknownId_returns404() {
+        ResponseEntity<Map> resp = post(
+                "/api/v1/notifications/outbox/9999999/mark-exported", adminToken, null);
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
     }
 }
